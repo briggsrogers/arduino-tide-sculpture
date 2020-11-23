@@ -3,11 +3,11 @@
 // Pin Assignments
 int outputPins[] = {3, 5, 6, 9, 10, 11};
 float numOfChannels = 6;
-float lengthOfTideCycle = 20; // Tide cycle in seconds (44640). Shorten for debug
+float lengthOfTideCycle = 2000; // Tide cycle in seconds (44640). Shorten for debug
 
 // Time Remaining (Mins until high tide. Min: 0, max: 744.)
-float t = 0;
-float interval = 1000; // Tick (ms)
+float t = 300;
+float interval = 1000; // One second
 
 // Direction
 float direction = 1; // 1 = rising | -1 = falling
@@ -15,6 +15,7 @@ float direction = 1; // 1 = rising | -1 = falling
 // Setup
 void setup() {
   Serial.begin(9600);
+  Serial.println ("Initializing...");
   // Set PinMode
   setPinModes();
 }
@@ -26,6 +27,13 @@ void loop() {
 
   // Set pin values
   lightPins();
+
+  Serial.println (" | ");
+  Serial.print ("Millis: ");
+  Serial.print (millis() / 1000);
+  Serial.print (" | ");
+  Serial.print ((t/lengthOfTideCycle) * 100);
+  Serial.print ("% | ");
 
   delay(interval);
 }
@@ -88,16 +96,15 @@ void lightPins(){
 
           // Logging
           Serial.print ("Time (seconds): ");
-          Serial.println (t);
-          Serial.print ("| Channel: ");
+          Serial.print (t);
+          Serial.print (" | Channel: ");
           Serial.print (channelNumber);
-          Serial.print ("| Value: ");
-          Serial.println (value);
+          Serial.print (" | Value: ");
+          Serial.print (value);
         }
      }
   }
 }
-
 
 // Set PinModes
 void setPinModes() {
