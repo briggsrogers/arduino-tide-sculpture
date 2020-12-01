@@ -5,7 +5,6 @@
 #include <EthernetUdp.h>
 #include <ArduinoJson.h>
 
-
 // Internet
 // ********************************
   byte mac[] = { 0xAE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED }; 
@@ -18,7 +17,6 @@
 //  Time Dependencies 
 // ********************************
 
-long recievedTime;
 unsigned int localPort = 8888;
 const char timeServer[] = "time.nist.gov";
 const int NTP_PACKET_SIZE = 48;
@@ -31,18 +29,18 @@ long initialMillis;
 // ********************************
 
 // Pin Assignments
-int outputPins[] = {2, 3, 5, 6, 7, 8}; // UNO
+int outputPins[] = {3, 5, 6, 9, A0, A1}; // UNO
 //int outputPins[] = {0, 1, 2, 3, 4, 5};
 float numOfChannels = 6;
-int lengthOfTideCycle = 22350; // Tide cycle L->H in seconds (22350). Shorten for debug
+long lengthOfTideCycle = 22350; // Tide cycle ( L -> H  ) in seconds (22350). Shorten for debug
 
 // Tide Logic Variables
 // ********************************
-// t: seconds elapsed in current cycle
+// t: seconds elapsed in current cycle (placeholder)
 float t = 200;
 
 // Tick rate (one second)
-float interval = 1000; 
+long interval = 1000; 
 
 // Direction
 float direction = 1; // 1 = rising | -1 = falling
@@ -50,18 +48,22 @@ float direction = 1; // 1 = rising | -1 = falling
 // Last low tide (Nov 27 @ 10:03am)
 // Updated by getLastLowTide()
 long lastlow = 1606471380;
+
+unsigned long startTime;
+unsigned long currentTime;
+boolean timeSet = false;
+long recievedTime;
+
 // ********************************
 
 // Setup
 void setup() {
   Serial.begin(9600);
 
+  startTime = millis();
+
   // Set PinModes
   setPinModes();
-
-  while (!Serial) {
-    ; // wait for serial port to connect. Needed for native USB
-  }
 
   Serial.println("Initializing...");
   getTimeFromNTP();
@@ -72,24 +74,27 @@ void setup() {
 }
 
 void loop() {
-  
-  int timeElapsed = millis() / 1000;
 
-  // Adjust tide ever 10 seconds
-  if(timeElapsed % 10 == 0){
-    // Raise and lower t value
-    setTidePosition();
+  while(!timeSet){return;}
+
+  currentTime = millis();
+
+  if (currentTime - startTime >= interval) {
+     // Raise and lower t value
+    setTidePosition(interval);
     lightPins();
+    
+    //Reset timer
+    startTime = currentTime;
   }
-  
-  // Adjust tide ever 30 seconds
-  if(timeElapsed % 30 == 0){
+
+  // Log every 100 seconds
+  if(currentTime % 100000 == 0){
     log();
   }
-
 }
 
-void setTidePosition(){          
+void setTidePosition(int interval){          
  
    if(t > lengthOfTideCycle){
     t = lengthOfTideCycle;
@@ -104,7 +109,8 @@ void setTidePosition(){
    }
 
    // Set t
-   float tVal = t + (10 * direction); // Increment or decrement by 1;
+   float tVal = t + ((interval/1000) * direction); // * by direction to determine increase or decrease
+
    t = tVal;
 }
 
@@ -119,6 +125,7 @@ void lightPins(){
 
     // Channel 1 is always on full
     if(channelNumber == 1){
+       // Logging
       analogWrite(pin, 255); 
      }
      // Other channels
@@ -146,8 +153,8 @@ void lightPins(){
           analogWrite(pin, value);
 
           // Logging
-          Serial.print ("Time (seconds): ");
-          Serial.print (t);
+          Serial.print ("Position (%): ");
+          Serial.print ((t/lengthOfTideCycle) * 100);
           Serial.print (" | Channel: ");
           Serial.print (channelNumber);
           Serial.print (" | Value: ");
@@ -182,7 +189,7 @@ void calibrate(){
   }
 
   Serial.println(F("Connected!"));
-  client.println(F("GET /get/latest/dweet/for/tidelight-v1 HTTP/1.1"));
+  client.println(F("GET /get/latest/dweet/for/arduino-tide-v1 HTTP/1.1"));
   client.println(F("Host: dweet.io"));
   client.println(F("Connection: close"));
   if (client.println() == 0) {
@@ -220,15 +227,49 @@ void calibrate(){
   }
 
   // Extract values
-  Serial.println(F("Response:"));
   Serial.println((doc["with"][0]["content"]["lastlow"].as<long>()));
 
   lastlow = doc["with"][0]["content"]["lastlow"];
 
-  // current time as recived from NTC
-  int timeSinceLastLow = recievedTime - lastlow;
-  int remainder = timeSinceLastLow % lengthOfTideCycle;
-  t = remainder;
+  Serial.println(F("Recieved last low: "));
+  Serial.println(lastlow);
+
+  // current time as recived from NTC just now
+  long timeSinceLastLow = recievedTime - lastlow;
+
+  Serial.print(F("Seconds since last low: "));
+  Serial.println(timeSinceLastLow);
+
+  long remainder;
+  // Remove finished cycles
+  if( timeSinceLastLow > lengthOfTideCycle ){
+    Serial.print(F("Removing finished cycles: "));
+    Serial.print((timeSinceLastLow));
+    Serial.print(F(" is greater than "));
+    Serial.print( lengthOfTideCycle );
+    remainder = timeSinceLastLow % lengthOfTideCycle;
+  }
+  else{
+    Serial.print(F("Setting remainder directly: "));
+    Serial.println(timeSinceLastLow);
+    remainder = timeSinceLastLow;
+  }
+
+  Serial.print(F("Completed cycles since low: "));
+  Serial.println(timeSinceLastLow / lengthOfTideCycle);
+
+  long cyclesCompleted = (timeSinceLastLow / lengthOfTideCycle);
+
+  // If even, rise
+  if (cyclesCompleted % 2 == 0){
+    t = remainder;
+    direction = 1;
+  }
+  // if odd, fall from top
+  else{
+    t = lengthOfTideCycle - remainder;
+    direction = -1;
+  }
 
   // Disconnect
   client.stop();
@@ -283,6 +324,9 @@ void getTimeFromNTP(){
     Serial.println(epoch);
     recievedTime = epoch;
 
+    //Set boolean
+    timeSet = true;
+
     Udp.stop();
   }
   else{
@@ -317,6 +361,7 @@ void sendNTPpacket(const char * address) {
 }
 
 void log(){
+
   Serial.println(F("Logging..."));
 
   // Send HTTP request
@@ -324,10 +369,10 @@ void log(){
     Serial.println(F("Failed to configure Ethernet"));
     return;
   }
-  delay(1000);
+
   // Connect to HTTP server
   EthernetClient client;
-  client.setTimeout(10000);
+  client.setTimeout(3000);
 
   if (!client.connect("dweet.io", 80)) {
     Serial.println(F("Connection failed"));
@@ -338,7 +383,6 @@ void log(){
   DynamicJsonDocument doc(255);
   doc["position"] = (t / lengthOfTideCycle) * 100;
 
-  Serial.println(F("Connected!"));
   client.println(F("POST /dweet/for/arduino-tide-metrics-v1 HTTP/1.1"));
   client.println(F("Host: dweet.io:443"));
   client.println(F("Content-Type: application/json"));
