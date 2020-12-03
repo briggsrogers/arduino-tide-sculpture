@@ -24,8 +24,6 @@ byte packetBuffer[NTP_PACKET_SIZE];
 
 EthernetUDP Udp;
 
-long initialMillis;
-
 // ********************************
 
 // Pin Assignments
@@ -46,27 +44,31 @@ long interval = 1000;
 float direction = 1; // 1 = rising | -1 = falling
 
 // Last low tide (Nov 27 @ 10:03am)
-// Updated by getLastLowTide()
+// Periodically updated by calibrate()
 long lastlow = 1606471380;
 
 unsigned long startTime;
 unsigned long currentTime;
 boolean timeSet = false;
+boolean calibrated = false;
 long recievedTime;
 
 // ********************************
 
 // Setup
 void setup() {
+
+  //Board setup
+  Ethernet.init(10);
+
   Serial.begin(9600);
-
-  startTime = millis();
-
+  
   // Set PinModes
   setPinModes();
 
   Serial.println("Initializing...");
   getTimeFromNTP();
+  
   Serial.print("Recieved current time: ");
   Serial.println(recievedTime);
 
@@ -88,30 +90,38 @@ void loop() {
     startTime = currentTime;
   }
 
-  // Log every 100 seconds
-  if(currentTime % 100000 == 0){
-    log();
-  }
+  // // Log every 100 seconds
+  // if(currentTime % 10000 == 0){
+  //   //log();
+  // }
+
+  // Calibrate every 100 seconds
+  // if(currentTime % 100000 == 0){
+  //   calibrate();
+  // }
 }
 
-void setTidePosition(int interval){          
- 
-   if(t > lengthOfTideCycle){
-    t = lengthOfTideCycle;
-    // Flip direction
-    direction = direction * -1;
-   }
-
-   else if(t < 0){
-    t = 0;
-    // Flip direction
-    direction = direction * -1;
-   }
+void setTidePosition(int interval){   
 
    // Set t
    float tVal = t + ((interval/1000) * direction); // * by direction to determine increase or decrease
 
-   t = tVal;
+   t = tVal;       
+ 
+   if(t >= lengthOfTideCycle){
+    t = lengthOfTideCycle;
+    // Flip direction
+    direction = -1;
+    Serial.println('Flipping direction');
+   }
+
+   else if(t <= 0){
+    t = 0;
+    // Flip direction
+    direction = 1;
+    Serial.println('Flipping direction');
+   }
+
 }
 
 // Logic to set channel values from 0 - 255
@@ -127,6 +137,11 @@ void lightPins(){
     if(channelNumber == 1){
        // Logging
       analogWrite(pin, 255); 
+
+      if(t < 1/lengthOfTideCycle){
+         Serial.print ("Position (%): ");
+         Serial.println (t/lengthOfTideCycle );
+      }
      }
      // Other channels
      else{
@@ -174,12 +189,13 @@ void setPinModes() {
 }
 
 void calibrate(){
+  // Set start time
+  startTime = millis();
   // Send HTTP request
   if (!Ethernet.begin(mac)) {
     Serial.println(F("Failed to configure Ethernet"));
     return;
   }
-  delay(1000);
   // Connect to HTTP server
   EthernetClient client;
   client.setTimeout(10000);
@@ -243,10 +259,6 @@ void calibrate(){
   long remainder;
   // Remove finished cycles
   if( timeSinceLastLow > lengthOfTideCycle ){
-    Serial.print(F("Removing finished cycles: "));
-    Serial.print((timeSinceLastLow));
-    Serial.print(F(" is greater than "));
-    Serial.print( lengthOfTideCycle );
     remainder = timeSinceLastLow % lengthOfTideCycle;
   }
   else{
@@ -270,6 +282,8 @@ void calibrate(){
     t = lengthOfTideCycle - remainder;
     direction = -1;
   }
+
+  calibrated = true;
 
   // Disconnect
   client.stop();
@@ -299,9 +313,8 @@ void getTimeFromNTP(){
 
   Udp.begin(localPort);
 
-  delay(500);
   sendNTPpacket(timeServer); 
-  delay(500);
+  delay(1000);
 
   if (Udp.parsePacket()) {
     // We've received a packet, read the data from it
@@ -330,9 +343,8 @@ void getTimeFromNTP(){
     Udp.stop();
   }
   else{
-    Serial.println(F("Trying NTC server again..."));
     Ethernet.maintain();
-    delay(500);
+    delay(1000);
     getTimeFromNTP();
   }
 }
