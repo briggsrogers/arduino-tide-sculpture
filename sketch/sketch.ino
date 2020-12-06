@@ -37,8 +37,10 @@ long lengthOfTideCycle = 22350; // Tide cycle ( L -> H  ) in seconds (22350). Sh
 // t: seconds elapsed in current cycle (placeholder)
 float t = 200;
 
-// Tick rate (one second)
-long interval = 1000; 
+// Tick rate (10 seconds)
+long interval = 10000; 
+// One hour
+long calibrationInterval = 3600000;
 
 // Direction
 float direction = 1; // 1 = rising | -1 = falling
@@ -47,8 +49,10 @@ float direction = 1; // 1 = rising | -1 = falling
 // Periodically updated by calibrate()
 long lastlow = 1606471380;
 
-unsigned long startTime;
+unsigned long startTimer;
+unsigned long calibrationTimer;
 unsigned long currentTime;
+
 boolean timeSet = false;
 boolean calibrated = false;
 long recievedTime;
@@ -65,13 +69,13 @@ void setup() {
   
   // Set PinModes
   setPinModes();
+  
+  bootUp(); 
+}
 
+void bootUp(){
   Serial.println("Initializing...");
   getTimeFromNTP();
-  
-  Serial.print("Recieved current time: ");
-  Serial.println(recievedTime);
-
   calibrate();
 }
 
@@ -81,24 +85,22 @@ void loop() {
 
   currentTime = millis();
 
-  if (currentTime - startTime >= interval) {
+  // Calibrate
+  if ( currentTime - calibrationTimer >= calibrationInterval ){
+    bootUp();
+    calibrationTimer = currentTime;
+  }
+
+  if (currentTime - startTimer >= interval) {
      // Raise and lower t value
     setTidePosition(interval);
     lightPins();
+    log();
     
     //Reset timer
-    startTime = currentTime;
+    startTimer = currentTime;
   }
-
-  // // Log every 100 seconds
-  // if(currentTime % 10000 == 0){
-  //   //log();
-  // }
-
-  // Calibrate every 100 seconds
-  // if(currentTime % 100000 == 0){
-  //   calibrate();
-  // }
+  
 }
 
 void setTidePosition(int interval){   
@@ -112,14 +114,12 @@ void setTidePosition(int interval){
     t = lengthOfTideCycle;
     // Flip direction
     direction = -1;
-    Serial.println('Flipping direction');
    }
 
    else if(t <= 0){
     t = 0;
     // Flip direction
     direction = 1;
-    Serial.println('Flipping direction');
    }
 
 }
@@ -190,7 +190,9 @@ void setPinModes() {
 
 void calibrate(){
   // Set start time
-  startTime = millis();
+  startTimer = millis();
+  calibrationTimer = millis();
+
   // Send HTTP request
   if (!Ethernet.begin(mac)) {
     Serial.println(F("Failed to configure Ethernet"));
@@ -199,14 +201,14 @@ void calibrate(){
   // Connect to HTTP server
   EthernetClient client;
   client.setTimeout(10000);
-  if (!client.connect("dweet.io", 80)) {
+  if (!client.connect("arduino-tide-sculpture.s3-eu-west-1.amazonaws.com", 80)) {
     Serial.println(F("Connection failed"));
     return;
   }
 
   Serial.println(F("Connected!"));
-  client.println(F("GET /get/latest/dweet/for/arduino-tide-v1 HTTP/1.1"));
-  client.println(F("Host: dweet.io"));
+  client.println(F("GET /lastlowtide.json HTTP/1.1"));
+  client.println(F("Host: arduino-tide-sculpture.s3-eu-west-1.amazonaws.com"));
   client.println(F("Connection: close"));
   if (client.println() == 0) {
     Serial.println(F("Failed to send request"));
@@ -243,9 +245,9 @@ void calibrate(){
   }
 
   // Extract values
-  Serial.println((doc["with"][0]["content"]["lastlow"].as<long>()));
+  Serial.println((doc["lastlow"].as<long>()));
 
-  lastlow = doc["with"][0]["content"]["lastlow"];
+  lastlow = doc["lastlow"];
 
   Serial.println(F("Recieved last low: "));
   Serial.println(lastlow);
@@ -287,6 +289,8 @@ void calibrate(){
 
   // Disconnect
   client.stop();
+
+  doc.clear();
 }
 
 // Request time from Network Time Protocol
@@ -384,7 +388,7 @@ void log(){
 
   // Connect to HTTP server
   EthernetClient client;
-  client.setTimeout(3000);
+  client.setTimeout(1000);
 
   if (!client.connect("dweet.io", 80)) {
     Serial.println(F("Connection failed"));
@@ -394,7 +398,9 @@ void log(){
   // Prepare JSON document
   DynamicJsonDocument doc(255);
   doc["position"] = (t / lengthOfTideCycle) * 100;
-
+  doc["millis"] = millis();
+  doc["memory"] = freeRam();
+  
   client.println(F("POST /dweet/for/arduino-tide-metrics-v1 HTTP/1.1"));
   client.println(F("Host: dweet.io:443"));
   client.println(F("Content-Type: application/json"));
@@ -408,5 +414,15 @@ void log(){
   // Disconnect
   client.stop();
 
+  // Clear memory
+  doc.clear();
+
+  return;
+
 }
 
+int freeRam () {
+  extern int __heap_start, *__brkval;
+  int v;
+  return (int) &v - (__brkval == 0 ? (int) &__heap_start : (int) __brkval);
+}

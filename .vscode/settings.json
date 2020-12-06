@@ -16,6 +16,10 @@
         "unordered_map": "cpp",
         "vector": "cpp",
         "cmath": "cpp",
-        "complex": "cpp"
+        "complex": "cpp",
+        "atomic": "cpp",
+        "ios": "cpp",
+        "system_error": "cpp",
+        "*.tcc": "cpp"
     }
 }
