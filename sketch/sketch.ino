@@ -14,7 +14,7 @@
   IPAddress myDns(192, 168, 0, 1);
 // ********************************
 
-//  Time Dependencies 
+//  NTP Dependencies 
 // ********************************
 
 unsigned int localPort = 8888;
@@ -27,10 +27,10 @@ EthernetUDP Udp;
 // ********************************
 
 // Pin Assignments
-int outputPins[] = {3, 5, 6, 9, A0, A1}; // UNO
+const int outputPins[] = {3, 5, 6, 9, A0, A1}; // UNO
 //int outputPins[] = {0, 1, 2, 3, 4, 5};
-float numOfChannels = 6;
-long lengthOfTideCycle = 22350; // Tide cycle ( L -> H  ) in seconds (22350). Shorten for debug
+const float numOfChannels = 6;
+const long lengthOfTideCycle = 10000; // Tide cycle ( L -> H  ) in seconds (22350). Shorten for debug
 
 // Tide Logic Variables
 // ********************************
@@ -38,9 +38,9 @@ long lengthOfTideCycle = 22350; // Tide cycle ( L -> H  ) in seconds (22350). Sh
 float t = 200;
 
 // Tick rate (10 seconds)
-long interval = 10000; 
+const long interval = 5000; 
 // One hour
-long calibrationInterval = 3600000;
+const long calibrationInterval = 3600000;
 
 // Direction
 float direction = 1; // 1 = rising | -1 = falling
@@ -51,11 +51,14 @@ long lastlow = 1606471380;
 
 unsigned long startTimer;
 unsigned long calibrationTimer;
-unsigned long currentTime;
+unsigned long timeElapsed = 0;
+unsigned long systemTime;
+unsigned long bootTime;
 
 boolean timeSet = false;
 boolean calibrated = false;
-long recievedTime;
+
+int hour;
 
 // ********************************
 
@@ -74,7 +77,7 @@ void setup() {
 }
 
 void bootUp(){
-  Serial.println("Initializing...");
+  Serial.println(F("Initializing..."));
   getTimeFromNTP();
   calibrate();
 }
@@ -83,22 +86,32 @@ void loop() {
 
   while(!timeSet){return;}
 
-  currentTime = millis();
+  timeElapsed = millis();
 
-  // Calibrate
-  if ( currentTime - calibrationTimer >= calibrationInterval ){
-    bootUp();
-    calibrationTimer = currentTime;
+  // Handle millis overflow
+  if(millis() - timeElapsed > interval){
+    timeElapsed = millis();
   }
 
-  if (currentTime - startTimer >= interval) {
+  //Update system time
+  systemTime = bootTime + (timeElapsed / 1000);
+
+  // Calibrate
+  if ( timeElapsed - calibrationTimer >= calibrationInterval ){
+    //log();
+    // calibrate();
+    // Reset timer
+    calibrationTimer = timeElapsed;
+  }
+
+  if (timeElapsed - startTimer >= interval) {
      // Raise and lower t value
     setTidePosition(interval);
     lightPins();
     log();
     
     //Reset timer
-    startTimer = currentTime;
+    startTimer = timeElapsed;
   }
   
 }
@@ -106,7 +119,7 @@ void loop() {
 void setTidePosition(int interval){   
 
    // Set t
-   float tVal = t + ((interval/1000) * direction); // * by direction to determine increase or decrease
+   const float tVal = t + ((interval/1000) * direction); // * by direction to determine increase or decrease
 
    t = tVal;       
  
@@ -130,25 +143,20 @@ void lightPins(){
   
   // Loop over pins
   for(int i = 0; i < numOfChannels; ++i) {
-    int pin = outputPins[i]; // Pin assignment number 
-    float channelNumber = i + 1.0; // Index starts at 0 so we add 1 to get channel number
+    const int pin = outputPins[i]; // Pin assignment number 
+    const float channelNumber = i + 1.0; // Index starts at 0 so we add 1 to get channel number
 
     // Channel 1 is always on full
     if(channelNumber == 1){
        // Logging
       analogWrite(pin, 255); 
-
-      if(t < 1/lengthOfTideCycle){
-         Serial.print ("Position (%): ");
-         Serial.println (t/lengthOfTideCycle );
-      }
      }
      // Other channels
      else{
         // Each channel is concerned with a band of values in the tide cycle based 
         // on its position in the set of channels.
-        float channelUpperBound = (channelNumber/numOfChannels) * lengthOfTideCycle;
-        float channelLowerBound = channelUpperBound - (lengthOfTideCycle/numOfChannels);
+        const float channelUpperBound = (channelNumber/numOfChannels) * lengthOfTideCycle;
+        const float channelLowerBound = channelUpperBound - (lengthOfTideCycle/numOfChannels);
 
         // If t (time until next high tide) has passed this channel's upper band, set to full brightness
         if(t > channelUpperBound){ analogWrite(pin, 255);  }
@@ -159,21 +167,13 @@ void lightPins(){
         // If is within channel band
         if(t > channelLowerBound && t < channelUpperBound) {
           // How far is t from the lower band of this channel? 
-          float distanceFromLowerBound = t - channelLowerBound;
+          const float distanceFromLowerBound = t - channelLowerBound;
           // What % through the channel band is t? 
-          float percentThroughBand = distanceFromLowerBound / (lengthOfTideCycle / numOfChannels);
+          const float percentThroughBand = distanceFromLowerBound / (lengthOfTideCycle / numOfChannels);
           // Set channel to this % of 255
           float value = round(255 * percentThroughBand);
           // Write
           analogWrite(pin, value);
-
-          // Logging
-          Serial.print ("Position (%): ");
-          Serial.print ((t/lengthOfTideCycle) * 100);
-          Serial.print (" | Channel: ");
-          Serial.print (channelNumber);
-          Serial.print (" | Value: ");
-          Serial.println (value);
         }
      }
   }
@@ -183,7 +183,7 @@ void lightPins(){
 void setPinModes() {
   //Loop over pins
   for(int i = 0; i < numOfChannels; ++i) {
-    int pin = outputPins[i];
+    const int pin = outputPins[i];
     pinMode(pin, OUTPUT);
   }
 }
@@ -244,19 +244,10 @@ void calibrate(){
     return;
   }
 
-  // Extract values
-  Serial.println((doc["lastlow"].as<long>()));
-
   lastlow = doc["lastlow"];
 
-  Serial.println(F("Recieved last low: "));
-  Serial.println(lastlow);
-
   // current time as recived from NTC just now
-  long timeSinceLastLow = recievedTime - lastlow;
-
-  Serial.print(F("Seconds since last low: "));
-  Serial.println(timeSinceLastLow);
+  const long timeSinceLastLow = bootTime - lastlow;
 
   long remainder;
   // Remove finished cycles
@@ -264,15 +255,10 @@ void calibrate(){
     remainder = timeSinceLastLow % lengthOfTideCycle;
   }
   else{
-    Serial.print(F("Setting remainder directly: "));
-    Serial.println(timeSinceLastLow);
     remainder = timeSinceLastLow;
   }
 
-  Serial.print(F("Completed cycles since low: "));
-  Serial.println(timeSinceLastLow / lengthOfTideCycle);
-
-  long cyclesCompleted = (timeSinceLastLow / lengthOfTideCycle);
+  const long cyclesCompleted = (timeSinceLastLow / lengthOfTideCycle);
 
   // If even, rise
   if (cyclesCompleted % 2 == 0){
@@ -288,6 +274,7 @@ void calibrate(){
   calibrated = true;
 
   // Disconnect
+  client.flush();
   client.stop();
 
   doc.clear();
@@ -297,20 +284,18 @@ void calibrate(){
 // https://www.arduino.cc/en/Tutorial/LibraryExamples/UdpNtpClient
 void getTimeFromNTP(){
 
-  Serial.println(F("Getting time from NTP..."));
-
   // start Ethernet and UDP
   if (Ethernet.begin(mac) == 0) {
-      Serial.println("Failed to configure Ethernet using DHCP");
+      Serial.println(F("Failed to configure Ethernet using DHCP"));
     // Check for Ethernet hardware present
     if (Ethernet.hardwareStatus() == EthernetNoHardware) {
-      Serial.println("Ethernet shield was not found.  Sorry, can't run without hardware. :(");
+      Serial.println(F("Ethernet shield was not found.  Sorry, can't run without hardware. :("));
       
     } else if (Ethernet.linkStatus() == LinkOFF) {
-      Serial.println("Ethernet cable is not connected.");
+      Serial.println(F("Ethernet cable is not connected."));
     }
     while (true) {
-      Serial.println("Abandoning..");
+      Serial.println(F("Abandoning.."));
       return;
     }
   }
@@ -337,9 +322,8 @@ void getTimeFromNTP(){
     const unsigned long seventyYears = 2208988800UL;
     // subtract seventy years:
     unsigned long epoch = secsSince1900 - seventyYears;
-    // print Unix time:
-    Serial.println(epoch);
-    recievedTime = epoch;
+
+    bootTime = epoch;
 
     //Set boolean
     timeSet = true;
@@ -348,7 +332,7 @@ void getTimeFromNTP(){
   }
   else{
     Ethernet.maintain();
-    delay(1000);
+    delay(4000);
     getTimeFromNTP();
   }
 }
@@ -378,8 +362,6 @@ void sendNTPpacket(const char * address) {
 
 void log(){
 
-  Serial.println(F("Logging..."));
-
   // Send HTTP request
   if (!Ethernet.begin(mac)) {
     Serial.println(F("Failed to configure Ethernet"));
@@ -398,7 +380,8 @@ void log(){
   // Prepare JSON document
   DynamicJsonDocument doc(255);
   doc["position"] = (t / lengthOfTideCycle) * 100;
-  doc["millis"] = millis();
+  doc["millis"] = timeElapsed;
+  doc["systemtime"] = systemTime;
   doc["memory"] = freeRam();
   
   client.println(F("POST /dweet/for/arduino-tide-metrics-v1 HTTP/1.1"));
@@ -412,16 +395,16 @@ void log(){
   serializeJsonPretty(doc, client);
 
   // Disconnect
+  client.flush();
   client.stop();
 
   // Clear memory
   doc.clear();
 
   return;
-
 }
 
-int freeRam () {
+int freeRam() {
   extern int __heap_start, *__brkval;
   int v;
   return (int) &v - (__brkval == 0 ? (int) &__heap_start : (int) __brkval);
