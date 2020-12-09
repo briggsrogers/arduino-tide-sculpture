@@ -7,7 +7,7 @@
 
 // Internet
 // ********************************
-  byte mac[] = { 0xAE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED }; 
+  const byte mac[] = { 0xAE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED }; 
 
   // Set the static IP address to use if the DHCP fails to assign
   IPAddress ip(192, 168, 0, 177);
@@ -23,6 +23,7 @@ const int NTP_PACKET_SIZE = 48;
 byte packetBuffer[NTP_PACKET_SIZE];
 
 EthernetUDP Udp;
+EthernetClient client;
 
 // ********************************
 
@@ -98,7 +99,7 @@ void loop() {
 
   // Calibrate
   if ( timeElapsed - calibrationTimer >= calibrationInterval ){
-    //log();
+    log();
     // calibrate();
     // Reset timer
     calibrationTimer = timeElapsed;
@@ -108,7 +109,6 @@ void loop() {
      // Raise and lower t value
     setTidePosition(interval);
     lightPins();
-    log();
     
     //Reset timer
     startTimer = timeElapsed;
@@ -198,8 +198,7 @@ void calibrate(){
     Serial.println(F("Failed to configure Ethernet"));
     return;
   }
-  // Connect to HTTP server
-  EthernetClient client;
+
   client.setTimeout(10000);
   if (!client.connect("arduino-tide-sculpture.s3-eu-west-1.amazonaws.com", 80)) {
     Serial.println(F("Connection failed"));
@@ -368,8 +367,7 @@ void log(){
     return;
   }
 
-  // Connect to HTTP server
-  EthernetClient client;
+
   client.setTimeout(1000);
 
   if (!client.connect("dweet.io", 80)) {
@@ -382,7 +380,6 @@ void log(){
   doc["position"] = (t / lengthOfTideCycle) * 100;
   doc["millis"] = timeElapsed;
   doc["systemtime"] = systemTime;
-  doc["memory"] = freeRam();
   
   client.println(F("POST /dweet/for/arduino-tide-metrics-v1 HTTP/1.1"));
   client.println(F("Host: dweet.io:443"));
@@ -404,8 +401,3 @@ void log(){
   return;
 }
 
-int freeRam() {
-  extern int __heap_start, *__brkval;
-  int v;
-  return (int) &v - (__brkval == 0 ? (int) &__heap_start : (int) __brkval);
-}
