@@ -22,6 +22,7 @@
         "system_error": "cpp",
         "*.tcc": "cpp",
         "cstddef": "cpp",
-        "ostream": "cpp"
+        "ostream": "cpp",
+        "memory": "cpp"
     }
 }

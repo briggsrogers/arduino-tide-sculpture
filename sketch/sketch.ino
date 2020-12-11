@@ -1,3 +1,6 @@
+#include <EasyNTPClient.h>
+
+#include <TimeLib.h>
 
 // Web Dependencies 
 #include <SPI.h>
@@ -9,19 +12,16 @@
 // ********************************
   byte mac[] = { 0xAE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED }; 
 
-  // Set the static IP address to use if the DHCP fails to assign
-  IPAddress ip(192, 168, 0, 177);
-  IPAddress myDns(192, 168, 0, 1);
+// NTP Servers:
+IPAddress timeServer(216, 239, 35, 0);
+const int timeZone = -1;
+
 // ********************************
 
 //  Time Dependencies 
 // ********************************
 
 unsigned int localPort = 8888;
-const char timeServer[] = "time.nist.gov";
-const int NTP_PACKET_SIZE = 48;
-byte packetBuffer[NTP_PACKET_SIZE];
-
 EthernetUDP Udp;
 
 // ********************************
@@ -38,7 +38,7 @@ long lengthOfTideCycle = 22350; // Tide cycle ( L -> H  ) in seconds (22350). Sh
 float t = 200;
 
 // Tick rate (10 seconds)
-long interval = 30000; 
+long interval = 5000; 
 
 // One hour
 long calibrationInterval = 3600000;
@@ -54,7 +54,7 @@ unsigned long startTimer;
 unsigned long calibrationTimer;
 unsigned long currentTime;
 
-boolean timeSet = false;
+boolean isTimeSet = false;
 boolean calibrated = false;
 long bootTime;
 long systemTime;
@@ -64,48 +64,49 @@ long systemTime;
 // Setup
 void setup() {
 
+  setPinModes();
+
   Serial.begin(9600);
 
   //Board setup
   Ethernet.init(10);
 
-  // Set PinModes
-  //setPinModes();
-  bootUp(); 
-}
+  if (Ethernet.begin(mac) == 0) {
+    // no point in carrying on, so do nothing forevermore:
+    while (1) {
+      Serial.println("Failed to configure Ethernet using DHCP");
+      delay(10000);
+    }
+  }
+  Serial.print("IP number assigned by DHCP is ");
+  Serial.println(Ethernet.localIP());
+  Udp.begin(localPort);
 
-void bootUp(){
-  Serial.println("Initializing...");
-  getTimeFromNTP();
+  Serial.println("Getting Time via NTP");
+  setSyncProvider(getNtpTime);
+
+  // Calulate t
   calibrate();
 }
 
 void loop() {
 
-  while(!timeSet){return;}
-
   currentTime = millis();
 
-  // Calibrate
-  if ( millis() - calibrationTimer >= calibrationInterval ){
-    log();
-    calibrationTimer = millis();
-  }
-
-  if (millis() - startTimer >= interval) {
+  // Tick
+  if (currentTime - startTimer >= interval) {
      // Raise and lower t value
-    setTidePosition(interval);
+    setTidePosition();
     lightPins();
-
-    systemTime = bootTime
+    log();
     
     //Reset timer
-    startTimer = (millis()/1000) + bootTime;
+    startTimer = currentTime;
   }
   
 }
 
-void setTidePosition(int interval){   
+void setTidePosition(){   
 
    // Set t
    float tVal = t + ((interval/1000) * direction); // * by direction to determine increase or decrease
@@ -175,7 +176,7 @@ void lightPins(){
           Serial.print (" | Channel: ");
           Serial.print (channelNumber);
           Serial.print (" | Value: ");
-          Serial.println (value);
+          Serial.print (value);
           Serial.print (" | RAM: ");
           Serial.println (freeRam());
           
@@ -258,7 +259,7 @@ void calibrate(){
   Serial.println(lastlow);
 
   // current time as recived from NTC just now
-  long timeSinceLastLow = bootTime - lastlow;
+  long timeSinceLastLow = now() - lastlow;
 
   Serial.print(F("Seconds since last low: "));
   Serial.println(timeSinceLastLow);
@@ -269,8 +270,6 @@ void calibrate(){
     remainder = timeSinceLastLow % lengthOfTideCycle;
   }
   else{
-    Serial.print(F("Setting remainder directly: "));
-    Serial.println(timeSinceLastLow);
     remainder = timeSinceLastLow;
   }
 
@@ -290,96 +289,15 @@ void calibrate(){
     direction = -1;
   }
 
-  calibrated = true;
-
   // Disconnect
   client.flush();
   client.stop();
 
   doc.clear();
-}
 
-// Request time from Network Time Protocol
-// https://www.arduino.cc/en/Tutorial/LibraryExamples/UdpNtpClient
-void getTimeFromNTP(){
-
-  Serial.println(F("Getting time from NTP..."));
-
-  // start Ethernet and UDP
-  if (Ethernet.begin(mac) == 0) {
-      Serial.println("Failed to configure Ethernet using DHCP");
-    // Check for Ethernet hardware present
-    if (Ethernet.hardwareStatus() == EthernetNoHardware) {
-      Serial.println("Ethernet shield was not found.  Sorry, can't run without hardware. :(");
-      
-    } else if (Ethernet.linkStatus() == LinkOFF) {
-      Serial.println("Ethernet cable is not connected.");
-    }
-
-    Serial.println("Ethernet did not init.");
-  }
-
-  Udp.begin(localPort);
-
-  delay(2000);
-
-  sendNTPpacket(timeServer); 
-  delay(2000);
-
-  if (Udp.parsePacket()) {
-    // We've received a packet, read the data from it
-    Udp.read(packetBuffer, NTP_PACKET_SIZE); // read the packet into the buffer
-
-    // the timestamp starts at byte 40 of the received packet and is four bytes,
-    // or two words, long. First, extract the two words:
-
-    unsigned long highWord = word(packetBuffer[40], packetBuffer[41]);
-    unsigned long lowWord = word(packetBuffer[42], packetBuffer[43]);
-    // combine the four bytes (two words) into a long integer
-    // this is NTP time (seconds since Jan 1 1900):
-    unsigned long secsSince1900 = highWord << 16 | lowWord;
-   
-    // Unix time starts on Jan 1 1970. In seconds, that's 2208988800:
-    const unsigned long seventyYears = 2208988800UL;
-    // subtract seventy years:
-    unsigned long epoch = secsSince1900 - seventyYears;
-    // print Unix time:
-    Serial.println(epoch);
-    bootTime = epoch;
-
-    //Set boolean
-    timeSet = true;
-
-    Udp.stop();
-  }
-  else{
-    Ethernet.maintain();
-    delay(1000);
-    getTimeFromNTP();
-  }
-}
-
-// send an NTP request to the time server at the given address
-void sendNTPpacket(const char * address) {
-  // set all bytes in the buffer to 0
-  memset(packetBuffer, 0, NTP_PACKET_SIZE);
-  // Initialize values needed to form NTP request
-  // (see URL above for details on the packets)
-  packetBuffer[0] = 0b11100011;   // LI, Version, Mode
-  packetBuffer[1] = 0;     // Stratum, or type of clock
-  packetBuffer[2] = 6;     // Polling Interval
-  packetBuffer[3] = 0xEC;  // Peer Clock Precision
-  // 8 bytes of zero for Root Delay & Root Dispersion
-  packetBuffer[12]  = 49;
-  packetBuffer[13]  = 0x4E;
-  packetBuffer[14]  = 49;
-  packetBuffer[15]  = 52;
-
-  // all NTP fields have been given values, now
-  // you can send a packet requesting a timestamp:
-  Udp.beginPacket(address, 123); // NTP requests are to port 123
-  Udp.write(packetBuffer, NTP_PACKET_SIZE);
-  Udp.endPacket();
+  // Light pins 
+  // (otherwise we have to wait for first interval)
+  lightPins();
 }
 
 void log(){
@@ -425,7 +343,6 @@ void log(){
   doc.clear();
 
   return;
-
 }
 
 int freeRam () {
@@ -435,4 +352,56 @@ int freeRam () {
   while ((buf = (byte *) malloc(--size)) == NULL);
       free(buf);
   return size;
+}
+
+/*-------- NTP code ----------*/
+
+const int NTP_PACKET_SIZE = 48; // NTP time is in the first 48 bytes of message
+byte packetBuffer[NTP_PACKET_SIZE]; //buffer to hold incoming & outgoing packets
+
+time_t getNtpTime()
+{
+  while (Udp.parsePacket() > 0) ; // discard any previously received packets
+  Serial.println("Transmit NTP Request");
+  sendNTPpacket(timeServer);
+  uint32_t beginWait = millis();
+  while (millis() - beginWait < 1500) {
+    int size = Udp.parsePacket();
+    if (size >= NTP_PACKET_SIZE) {
+      Serial.println("Receive NTP Response");
+      Udp.read(packetBuffer, NTP_PACKET_SIZE);  // read packet into the buffer
+      unsigned long secsSince1900;
+      // convert four bytes starting at location 40 to a long integer
+      secsSince1900 =  (unsigned long)packetBuffer[40] << 24;
+      secsSince1900 |= (unsigned long)packetBuffer[41] << 16;
+      secsSince1900 |= (unsigned long)packetBuffer[42] << 8;
+      secsSince1900 |= (unsigned long)packetBuffer[43];
+      return secsSince1900 - 2208988800UL + timeZone * SECS_PER_HOUR;
+    }
+  }
+  Serial.println("No NTP Response.");
+  return 0; // return 0 if unable to get the time
+}
+
+// send an NTP request to the time server at the given address
+void sendNTPpacket(IPAddress &address)
+{
+  // set all bytes in the buffer to 0
+  memset(packetBuffer, 0, NTP_PACKET_SIZE);
+  // Initialize values needed to form NTP request
+  // (see URL above for details on the packets)
+  packetBuffer[0] = 0b11100011;   // LI, Version, Mode
+  packetBuffer[1] = 0;     // Stratum, or type of clock
+  packetBuffer[2] = 6;     // Polling Interval
+  packetBuffer[3] = 0xEC;  // Peer Clock Precision
+  // 8 bytes of zero for Root Delay & Root Dispersion
+  packetBuffer[12]  = 49;
+  packetBuffer[13]  = 0x4E;
+  packetBuffer[14]  = 49;
+  packetBuffer[15]  = 52;
+  // all NTP fields have been given values, now
+  // you can send a packet requesting a timestamp:                 
+  Udp.beginPacket(address, 123); //NTP requests are to port 123
+  Udp.write(packetBuffer, NTP_PACKET_SIZE);
+  Udp.endPacket();
 }
