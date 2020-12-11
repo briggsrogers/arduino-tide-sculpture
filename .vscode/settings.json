@@ -20,6 +20,8 @@
         "atomic": "cpp",
         "ios": "cpp",
         "system_error": "cpp",
-        "*.tcc": "cpp"
+        "*.tcc": "cpp",
+        "cstddef": "cpp",
+        "ostream": "cpp"
     }
 }

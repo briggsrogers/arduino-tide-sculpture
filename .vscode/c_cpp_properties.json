@@ -3,6 +3,7 @@
         {
             "name": "Mac",
             "includePath": [
+                "/Users/rogbrian/Documents/Arduino/libraries/Adafruit_SleepyDog_Library",
                 "/Users/rogbrian/Library/Arduino15/packages/arduino/tools/**",
                 "/Users/rogbrian/Library/Arduino15/packages/arduino/hardware/samd/1.8.9/**",
                 "/Applications/Arduino.app/Contents/Java/tools/**",
