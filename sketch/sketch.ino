@@ -1,9 +1,6 @@
-#include <EasyNTPClient.h>
-
 #include <TimeLib.h>
 
 // Web Dependencies 
-#include <SPI.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <ArduinoJson.h>
@@ -14,7 +11,7 @@
 
 // NTP Servers:
 IPAddress timeServer(216, 239, 35, 0);
-const int timeZone = -1;
+const int timeZone = 0;
 
 // ********************************
 
@@ -37,7 +34,7 @@ long lengthOfTideCycle = 22350; // Tide cycle ( L -> H  ) in seconds (22350). Sh
 // t: seconds elapsed in current cycle (placeholder)
 float t = 200;
 
-// Tick rate (10 seconds)
+// Tick rate (5 seconds)
 long interval = 5000; 
 
 // One hour
@@ -53,11 +50,6 @@ long lastlow = 1606471380;
 unsigned long startTimer;
 unsigned long calibrationTimer;
 unsigned long currentTime;
-
-boolean isTimeSet = false;
-boolean calibrated = false;
-long bootTime;
-long systemTime;
 
 // ********************************
 
@@ -78,8 +70,7 @@ void setup() {
       delay(10000);
     }
   }
-  Serial.print("IP number assigned by DHCP is ");
-  Serial.println(Ethernet.localIP());
+
   Udp.begin(localPort);
 
   Serial.println("Getting Time via NTP");
@@ -96,13 +87,16 @@ void loop() {
   // Tick
   if (currentTime - startTimer >= interval) {
      // Raise and lower t value
+    log();
+
     setTidePosition();
     lightPins();
-    log();
     
     //Reset timer
     startTimer = currentTime;
   }
+
+  Ethernet.maintain();
   
 }
 
@@ -171,15 +165,11 @@ void lightPins(){
           analogWrite(pin, value);
 
           // Logging
-          Serial.print ("Position (%): ");
           Serial.print ((t/lengthOfTideCycle) * 100);
-          Serial.print (" | Channel: ");
-          Serial.print (channelNumber);
-          Serial.print (" | Value: ");
+          Serial.print ("% | Value: ");
           Serial.print (value);
           Serial.print (" | RAM: ");
-          Serial.println (freeRam());
-          
+          Serial.println (freeRam());    
         }
      }
   }
@@ -201,7 +191,6 @@ void calibrate(){
 
   // Send HTTP request
   if (!Ethernet.begin(mac)) {
-    Serial.println(F("Failed to configure Ethernet"));
     return;
   }
   // Connect to HTTP server
@@ -302,17 +291,9 @@ void calibrate(){
 
 void log(){
 
-  Serial.println(F("Logging..."));
-
-  // Send HTTP request
-  if (!Ethernet.begin(mac)) {
-    Serial.println(F("Failed to configure Ethernet"));
-    return;
-  }
-
   // Connect to HTTP server
   EthernetClient client;
-  client.setTimeout(1000);
+  client.setTimeout(5000);
 
   if (!client.connect("dweet.io", 80)) {
     Serial.println(F("Connection failed"));
@@ -323,6 +304,7 @@ void log(){
   DynamicJsonDocument doc(255);
   doc["position"] = (t / lengthOfTideCycle) * 100;
   doc["millis"] = millis();
+  doc["systemtime"] = now();
   doc["memory"] = freeRam();
   
   client.println(F("POST /dweet/for/arduino-tide-metrics-v1 HTTP/1.1"));
@@ -341,9 +323,9 @@ void log(){
 
   // Clear memory
   doc.clear();
-
-  return;
 }
+
+/*-------- RAM monitor ----------*/
 
 int freeRam () {
   // Use 1024 with ATmega168
