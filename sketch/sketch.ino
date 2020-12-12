@@ -1,20 +1,20 @@
 #include <TimeLib.h>
 
 // Web Dependencies 
+#include <SPI.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <ArduinoJson.h>
 
 // Internet
 // ********************************
-  byte mac[] = { 0xAE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED }; 
+byte mac[] = { 0xAE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED }; 
 
 // NTP Servers:
 IPAddress timeServer(216, 239, 35, 0);
 const int timeZone = 0;
 
 // ********************************
-
 //  Time Dependencies 
 // ********************************
 
@@ -37,8 +37,8 @@ float t = 200;
 // Tick rate (5 seconds)
 long interval = 5000; 
 
-// One hour
-long calibrationInterval = 3600000;
+// 1 min
+long calibrationInterval = 60000;
 
 // Direction
 float direction = 1; // 1 = rising | -1 = falling
@@ -86,14 +86,16 @@ void loop() {
 
   // Tick
   if (currentTime - startTimer >= interval) {
-     // Raise and lower t value
-    log();
-
-    setTidePosition();
-    lightPins();
-    
     //Reset timer
     startTimer = currentTime;
+    setTidePosition();
+    lightPins();
+  }
+
+  if(currentTime - calibrationTimer >= calibrationInterval){
+     //Reset timer
+    calibrationTimer = currentTime;
+    log();
   }
 
   Ethernet.maintain();
@@ -189,12 +191,14 @@ void calibrate(){
   startTimer = millis();
   calibrationTimer = millis();
 
+  // Client
+  EthernetClient client;
+
   // Send HTTP request
   if (!Ethernet.begin(mac)) {
     return;
   }
-  // Connect to HTTP server
-  EthernetClient client;
+
   client.setTimeout(10000);
   if (!client.connect("arduino-tide-sculpture.s3-eu-west-1.amazonaws.com", 80)) {
     Serial.println(F("Connection failed"));
@@ -291,38 +295,50 @@ void calibrate(){
 
 void log(){
 
-  // Connect to HTTP server
+  Serial.println(F("Init client..."));
+
   EthernetClient client;
-  client.setTimeout(5000);
+  client.setTimeout(10000);
 
   if (!client.connect("dweet.io", 80)) {
     Serial.println(F("Connection failed"));
     return;
   }
 
+  Serial.println(F("Connected!"));
+
   // Prepare JSON document
   DynamicJsonDocument doc(255);
+
+  Serial.println(F("Init doc variable..."));
+
   doc["position"] = (t / lengthOfTideCycle) * 100;
   doc["millis"] = millis();
   doc["systemtime"] = now();
   doc["memory"] = freeRam();
+
+  Serial.println(F("Doc constructed..."));
   
   client.println(F("POST /dweet/for/arduino-tide-metrics-v1 HTTP/1.1"));
   client.println(F("Host: dweet.io:443"));
   client.println(F("Content-Type: application/json"));
-  client.println(F("Connection: close"));
   client.print(F("Content-Length: "));
   client.println(measureJsonPretty(doc));
+  client.println(F("Connection: close"));
   client.println();
   
   serializeJsonPretty(doc, client);
 
+  Serial.println(F("Req made..."));
+  
   // Disconnect
-  client.flush();
   client.stop();
 
-  // Clear memory
+    // Clear memory
   doc.clear();
+
+   Serial.print(F("Log end. Ram: "));
+   Serial.println(freeRam ());
 }
 
 /*-------- RAM monitor ----------*/
