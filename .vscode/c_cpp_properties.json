@@ -13,10 +13,12 @@
                 "/Users/rogbrian/Documents/Arduino/libraries/**",
                 "/Applications/Arduino.app/Contents/Java/libraries/**",
                 "/Applications/Arduino.app/Contents/Java/hardware/tools/**",
-                "/Applications/Arduino.app/Contents/Java/hardware/arduino/avr/**"
+                "/Applications/Arduino.app/Contents/Java/hardware/arduino/avr/**",
+                "/Users/rogbrian/Library/Arduino15/packages/arduino/hardware/avr/1.8.2/**"
             ],
             "forcedInclude": [
-                "/Applications/Arduino.app/Contents/Java/hardware/arduino/avr/cores/arduino/Arduino.h"
+                "/Applications/Arduino.app/Contents/Java/hardware/arduino/avr/cores/arduino/Arduino.h",
+                "/Users/rogbrian/Library/Arduino15/packages/arduino/hardware/avr/1.8.2/cores/arduino/Arduino.h"
             ],
             "defines": [
                 "USBCON"
