@@ -1,10 +1,17 @@
+#define BLYNK_PRINT Serial // Defines the object that is used for printing
+//#define BLYNK_DEBUG        // Optional, this enables more detailed prints
+
 #include <TimeLib.h>
 
 // Web Dependencies 
 #include <SPI.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
+#include <BlynkSimpleEthernet.h>
 #include <ArduinoJson.h>
+
+// Blynk
+BlynkTimer timer;
 
 // Internet
 // ********************************
@@ -13,6 +20,13 @@ byte mac[] = { 0xAE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED };
 // NTP Servers:
 IPAddress timeServer(216, 239, 35, 0);
 const int timeZone = 0;
+
+// Blynk
+char auth[] = "G3jTchHrHfKQZm4jcQ3hXmo0Rs3rAujd";
+
+#define W5100_CS  10
+#define SDCARD_CS 4
+
 
 // ********************************
 //  Time Dependencies 
@@ -35,10 +49,7 @@ long lengthOfTideCycle = 22350; // Tide cycle ( L -> H  ) in seconds (22350). Sh
 float t = 200;
 
 // Tick rate (5 seconds)
-long interval = 5000; 
-
-// 1 min
-long calibrationInterval = 60000;
+long interval = 2000; 
 
 // Direction
 float direction = 1; // 1 = rising | -1 = falling
@@ -56,50 +67,30 @@ unsigned long currentTime;
 // Setup
 void setup() {
 
-  setPinModes();
-
   Serial.begin(9600);
 
-  //Board setup
-  Ethernet.init(10);
+  // Deselect the SD card
+  pinMode(SDCARD_CS, OUTPUT);
+  digitalWrite(SDCARD_CS, HIGH); 
+  setPinModes();
 
-  if (Ethernet.begin(mac) == 0) {
-    // no point in carrying on, so do nothing forevermore:
-    while (1) {
-      Serial.println("Failed to configure Ethernet using DHCP");
-      delay(10000);
-    }
-  }
-
-  Udp.begin(localPort);
-
-  Serial.println("Getting Time via NTP");
+  // Serial.println("Getting Time via NTP");
   setSyncProvider(getNtpTime);
 
   // Calulate t
   calibrate();
+
+  Blynk.begin(auth);
+
+  // Setup a function to be called every second
+  timer.setInterval(interval, setTidePosition);
+  timer.setInterval((interval * 2), lightPins);
+  
 }
 
 void loop() {
-
-  currentTime = millis();
-
-  // Tick
-  if (currentTime - startTimer >= interval) {
-    //Reset timer
-    startTimer = currentTime;
-    setTidePosition();
-    lightPins();
-  }
-
-  if(currentTime - calibrationTimer >= calibrationInterval){
-     //Reset timer
-    calibrationTimer = currentTime;
-    log();
-  }
-
-  Ethernet.maintain();
-  
+  Blynk.run();
+  timer.run(); 
 }
 
 void setTidePosition(){   
@@ -120,6 +111,8 @@ void setTidePosition(){
     // Flip direction
     direction = 1;
    }
+
+   Blynk.virtualWrite(V0, (t / lengthOfTideCycle));
 
 }
 
@@ -164,14 +157,7 @@ void lightPins(){
           // Set channel to this % of 255
           float value = round(255 * percentThroughBand);
           // Write
-          analogWrite(pin, value);
-
-          // Logging
-          Serial.print ((t/lengthOfTideCycle) * 100);
-          Serial.print ("% | Value: ");
-          Serial.print (value);
-          Serial.print (" | RAM: ");
-          Serial.println (freeRam());    
+          analogWrite(pin, value);  
         }
      }
   }
@@ -291,54 +277,6 @@ void calibrate(){
   // Light pins 
   // (otherwise we have to wait for first interval)
   lightPins();
-}
-
-void log(){
-
-  Serial.println(F("Init client..."));
-
-  EthernetClient client;
-  client.setTimeout(10000);
-
-  if (!client.connect("dweet.io", 80)) {
-    Serial.println(F("Connection failed"));
-    return;
-  }
-
-  Serial.println(F("Connected!"));
-
-  // Prepare JSON document
-  DynamicJsonDocument doc(255);
-
-  Serial.println(F("Init doc variable..."));
-
-  doc["position"] = (t / lengthOfTideCycle) * 100;
-  doc["millis"] = millis();
-  doc["systemtime"] = now();
-  doc["memory"] = freeRam();
-
-  Serial.println(F("Doc constructed..."));
-  
-  client.println(F("POST /dweet/for/arduino-tide-metrics-v1 HTTP/1.1"));
-  client.println(F("Host: dweet.io:443"));
-  client.println(F("Content-Type: application/json"));
-  client.print(F("Content-Length: "));
-  client.println(measureJsonPretty(doc));
-  client.println(F("Connection: close"));
-  client.println();
-  
-  serializeJsonPretty(doc, client);
-
-  Serial.println(F("Req made..."));
-  
-  // Disconnect
-  client.stop();
-
-    // Clear memory
-  doc.clear();
-
-   Serial.print(F("Log end. Ram: "));
-   Serial.println(freeRam ());
 }
 
 /*-------- RAM monitor ----------*/

@@ -3,6 +3,7 @@
         {
             "name": "Mac",
             "includePath": [
+                "/Users/rogbrian/Documents/Arduino/libraries/Blynk/src",
                 "/Users/rogbrian/Documents/Arduino/libraries/EasyNTPClient/src",
                 "/Users/rogbrian/Documents/Arduino/libraries/Time",
                 "/Users/rogbrian/Documents/Arduino/libraries/Adafruit_SleepyDog_Library",
