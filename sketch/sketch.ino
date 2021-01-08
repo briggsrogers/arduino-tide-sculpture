@@ -5,6 +5,7 @@
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <ArduinoJson.h>
+#include <Adafruit_SleepyDog.h>
 
 // Internet
 // ********************************
@@ -20,25 +21,29 @@ const int timeZone = 0;
 
 unsigned int localPort = 8888;
 EthernetUDP Udp;
+EthernetClient client;
+
+// Set the static IP address to use if the DHCP fails to assign
+IPAddress ip(192, 168, 0, 177);
+IPAddress myDns(192, 168, 0, 1);
 
 // ********************************
 
 // Pin Assignments
-int outputPins[] = {3, 5, 6, 9, A0, A1}; // UNO
+int outputPins[] = {3, 5, 6, 9, A0, A1}; // Ethernet Board
 //int outputPins[] = {0, 1, 2, 3, 4, 5};
 float numOfChannels = 6;
 long lengthOfTideCycle = 22350; // Tide cycle ( L -> H  ) in seconds (22350). Shorten for debug
 
 // Tide Logic Variables
-// ********************************
 // t: seconds elapsed in current cycle (placeholder)
 float t = 200;
 
 // Tick rate (5 seconds)
 long interval = 5000; 
 
-// 1 min
-long calibrationInterval = 60000;
+// 4 hours
+long calibrationInterval = (60000 * 60 * 4);
 
 // Direction
 float direction = 1; // 1 = rising | -1 = falling
@@ -56,26 +61,46 @@ unsigned long currentTime;
 // Setup
 void setup() {
 
-  setPinModes();
+setPinModes();
 
-  Serial.begin(9600);
+// Set start time
+startTimer = millis();
+calibrationTimer = millis();
 
-  //Board setup
-  Ethernet.init(10);
+Serial.begin(9600);
+Serial.println("Initializing...");
 
-  if (Ethernet.begin(mac) == 0) {
-    // no point in carrying on, so do nothing forevermore:
-    while (1) {
-      Serial.println("Failed to configure Ethernet using DHCP");
-      delay(10000);
+// Emable watchdog
+// https://github.com/adafruit/Adafruit_SleepyDog/blob/master/examples/BasicUsage/BasicUsage.ino
+Watchdog.enable(8000);
+
+//Board setup
+Serial.println("Ethernet begin...");
+
+  // Open ethernet connection
+if (Ethernet.begin(mac) == 0) {
+    Serial.println("Failed to configure Ethernet using DHCP");
+    // Check for Ethernet hardware present
+    if (Ethernet.hardwareStatus() == EthernetNoHardware) {
+      Serial.println("Ethernet shield was not found.");
+      return;
     }
+    if (Ethernet.linkStatus() == LinkOFF) {
+      Serial.println("Ethernet cable is not connected.");
+    }
+    // try to congifure using IP address instead of DHCP:
+  } else {
+    Serial.print("DHCP assigned IP ");
+    Serial.println(Ethernet.localIP());
+
+    Udp.begin(localPort);
+
+    Serial.println("Getting Time via NTP");
+    setSyncProvider(getNtpTime);
+    setSyncInterval( 60 * 60 * 2 ); // sync time every 2 hours 
+    getLastLowTide();
   }
-
-  Udp.begin(localPort);
-
-  Serial.println("Getting Time via NTP");
-  setSyncProvider(getNtpTime);
-
+  
   // Calulate t
   calibrate();
 }
@@ -90,9 +115,21 @@ void loop() {
     startTimer = currentTime;
     setTidePosition();
     lightPins();
+
+     Ethernet.maintain();
   }
 
-  Ethernet.maintain();
+  // Calibrate
+  if (currentTime - calibrationTimer >= calibrationInterval) {
+    //Reset timer
+    calibrationTimer = currentTime;
+    
+    getLastLowTide();
+    calibrate();
+  }
+
+  Watchdog.reset();
+ 
 }
 
 void setTidePosition(){   
@@ -128,11 +165,6 @@ void lightPins(){
     if(channelNumber == 1){
        // Logging
       analogWrite(pin, 255); 
-
-      if(t < 1/lengthOfTideCycle){
-         Serial.print ("Position (%): ");
-         Serial.println (t/lengthOfTideCycle );
-      }
      }
      // Other channels
      else{
@@ -182,22 +214,28 @@ void setPinModes() {
   digitalWrite(4,HIGH);
 }
 
-void calibrate(){
-  // Set start time
-  startTimer = millis();
-  calibrationTimer = millis();
+void getLastLowTide(){
 
-  // Client
-  EthernetClient client;
+  client.stop();
 
-  // Send HTTP request
-  if (!Ethernet.begin(mac)) {
+  Serial.println(F("Getting last low"));
+
+  if (Ethernet.hardwareStatus() == EthernetNoHardware) {
+    Serial.println("Ethernet shield was not found.");
+    delay(10000); // Trigger watchdog
     return;
   }
+  if (Ethernet.linkStatus() == LinkOFF) {
+    Serial.println("Ethernet cable is not connected.");
+    delay(10000); // Trigger watchdog
+    return;
+  }
+    
+  Watchdog.reset();
 
-  client.setTimeout(10000);
   if (!client.connect("arduino-tide-sculpture.s3-eu-west-1.amazonaws.com", 80)) {
     Serial.println(F("Connection failed"));
+    delay(10000); // Trigger watchdog
     return;
   }
 
@@ -205,10 +243,15 @@ void calibrate(){
   client.println(F("GET /lastlowtide.json HTTP/1.1"));
   client.println(F("Host: arduino-tide-sculpture.s3-eu-west-1.amazonaws.com"));
   client.println(F("Connection: close"));
+  
   if (client.println() == 0) {
     Serial.println(F("Failed to send request"));
     return;
   }
+
+  Watchdog.reset();
+
+  Serial.println(F("Parsing response..."));
 
   // Check HTTP status
   char status[32] = {0};
@@ -219,12 +262,17 @@ void calibrate(){
     return;
   }
 
+  Watchdog.reset();
+
   // Skip HTTP headers
   char endOfHeaders[] = "\r\n\r\n";
   if (!client.find(endOfHeaders)) {
     Serial.println(F("Invalid response"));
-    return;
   }
+
+  Serial.println(F("Handling JSON..."));
+
+  Watchdog.reset();
 
   // Allocate the JSON document
   // Use arduinojson.org/v6/assistant to compute the capacity.
@@ -242,12 +290,19 @@ void calibrate(){
   // Extract values
   Serial.println((doc["lastlow"].as<long>()));
 
+  Serial.println(F("Setting lastlow..."));
   lastlow = doc["lastlow"];
 
-  Serial.println(F("Recieved last low: "));
-  Serial.println(lastlow);
+  doc.clear();
 
-  // current time as recived from NTC just now
+  return;
+}
+
+void calibrate(){
+
+  if(!timeSet){ Serial.print(F("Time not set. Not calibrating."));  return; }
+
+  // current time as recived from NTP just now
   long timeSinceLastLow = now() - lastlow;
 
   Serial.print(F("Seconds since last low: "));
@@ -278,63 +333,9 @@ void calibrate(){
     direction = -1;
   }
 
-  // Disconnect
-  client.flush();
-  client.stop();
-
-  doc.clear();
-
   // Light pins 
   // (otherwise we have to wait for first interval)
   lightPins();
-}
-
-void log(){
-
-  Serial.println(F("Init client..."));
-
-  EthernetClient client;
-  client.setTimeout(10000);
-
-  if (!client.connect("dweet.io", 80)) {
-    Serial.println(F("Connection failed"));
-    return;
-  }
-
-  Serial.println(F("Connected!"));
-
-  // Prepare JSON document
-  DynamicJsonDocument doc(255);
-
-  Serial.println(F("Init doc variable..."));
-
-  doc["position"] = (t / lengthOfTideCycle) * 100;
-  doc["millis"] = millis();
-  doc["systemtime"] = now();
-  doc["memory"] = freeRam();
-
-  Serial.println(F("Doc constructed..."));
-  
-  client.println(F("POST /dweet/for/arduino-tide-metrics-v1 HTTP/1.1"));
-  client.println(F("Host: dweet.io:443"));
-  client.println(F("Content-Type: application/json"));
-  client.print(F("Content-Length: "));
-  client.println(measureJsonPretty(doc));
-  client.println(F("Connection: close"));
-  client.println();
-  
-  serializeJsonPretty(doc, client);
-
-  Serial.println(F("Req made..."));
-  
-  // Disconnect
-  client.stop();
-
-    // Clear memory
-  doc.clear();
-
-   Serial.print(F("Log end. Ram: "));
-   Serial.println(freeRam ());
 }
 
 /*-------- RAM monitor ----------*/
