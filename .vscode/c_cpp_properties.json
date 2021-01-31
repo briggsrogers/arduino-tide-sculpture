@@ -17,7 +17,7 @@
                 "/Users/rogbrian/Library/Arduino15/packages/arduino/hardware/avr/1.8.2/**"
             ],
             "forcedInclude": [
-                "/Applications/Arduino.app/Contents/Java/hardware/arduino/avr/cores/arduino/Arduino.h"
+                "/Users/rogbrian/Library/Arduino15/packages/arduino/hardware/samd/1.8.9/cores/arduino/Arduino.h"
             ],
             "defines": [
                 "USBCON"
